@@ -1,0 +1,9 @@
+{
+  "name": "a-stock-fast-trading",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "nlohmann-json",
+    "redis-plus-plus",
+    "boost-lockfree"
+  ]
+}
