@@ -1,0 +1,70 @@
+import yaml
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, 
+                               QPushButton, QMessageBox, QLabel)
+from PySide6.QtGui import QFont, QColor
+from utils import SystemUtils
+
+class ConfigEditor(QWidget):
+    def __init__(self, config_path):
+        super().__init__()
+        self.config_path = config_path
+        self.setup_ui()
+        self.load_file()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # 头部说明
+        header = QHBoxLayout()
+        title = QLabel(f"编辑配置文件: {self.config_path}")
+        title.setStyleSheet("color: #aaaaaa; font-weight: bold;")
+        header.addWidget(title)
+        
+        self.btn_save = QPushButton("💾 保存并校验")
+        self.btn_save.clicked.connect(self.save_file)
+        self.btn_save.setStyleSheet("background-color: #007acc; color: white;")
+        
+        self.btn_reload = QPushButton("🔄 重置")
+        self.btn_reload.clicked.connect(self.load_file)
+        
+        header.addStretch()
+        header.addWidget(self.btn_reload)
+        header.addWidget(self.btn_save)
+        layout.addLayout(header)
+
+        # 编辑区
+        self.editor = QTextEdit()
+        self.editor.setFont(QFont("Consolas", 10))
+        self.editor.setStyleSheet("""
+            QTextEdit { 
+                background-color: #1e1e1e; 
+                color: #d4d4d4; 
+                border: 1px solid #3c3c3c;
+            }
+        """)
+        layout.addWidget(self.editor)
+
+    def load_file(self):
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                self.editor.setPlainText(content)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"无法读取文件: {str(e)}")
+
+    def save_file(self):
+        content = self.editor.toPlainText()
+        # 1. 语法校验
+        try:
+            yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            QMessageBox.warning(self, "YAML 格式错误", f"配置格式有误，无法保存:\n{str(e)}")
+            return
+
+        # 2. 落盘
+        try:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            QMessageBox.information(self, "成功", "配置已保存。请重启相关服务以生效。")
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", str(e))

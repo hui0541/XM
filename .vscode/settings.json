@@ -1,3 +1,9 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "python.analysis.extraPaths": [
+        "./一键启动器模块"
+    ],
+    "python.autoComplete.extraPaths": [
+        "./一键启动器模块"
+    ]
 }

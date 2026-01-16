@@ -1,17 +1,48 @@
-public class BrokerApiConnector {
-    // 模拟对接通达信交易端 (如调用 dll 或 网页接口)
-    public String submitOrder(String code, String side, int qty, double price) {
-        System.out.println("[交易执行] 正在向券商发送报单: " + code + " " + side);
-        // 模拟调用耗时
-        long start = System.currentTimeMillis();
+/**
+ * 对应文件：券商交易接口.java
+ * 职责：定义标准化的交易动作
+ */
+public interface 券商交易接口 {
 
-        // 实际场景：BrokerSDK.send(code, side, qty, price);
-        String orderId = "ORD_" + System.nanoTime();
+    // 初始化连接
+    void init(String config);
 
-        long end = System.currentTimeMillis();
-        // 调用性能监控模块
-        PerformanceMonitor.record("ORDER_SUBMIT", end - start);
+    // 报单 (返回 OrderID)
+    String insertOrder(OrderRequest request);
 
-        return orderId;
+    // 撤单
+    void cancelOrder(String orderId);
+
+    // 查询持仓
+    void queryPosition();
+
+    // 注册回报回调 (当订单状态变化时调用)
+    void setCallback(TradeCallback callback);
+
+    // ============================
+    // 内部数据结构
+    // ============================
+    @lombok.Data
+    class OrderRequest {
+        String symbol; // 代码
+        int direction; // 1=Buy, -1=Sell
+        double price; // 价格
+        int quantity; // 数量
+        String strategyId; // 来源策略ID
+    }
+
+    @lombok.Data
+    @lombok.AllArgsConstructor
+    class OrderUpdate {
+        String orderId;
+        String status; // SUBMITTED, PARTIAL, FILLED, CANCELED, REJECTED
+        double tradedPrice;
+        int tradedVolume;
+        String message;
+    }
+
+    // 回调接口
+    interface TradeCallback {
+        void onOrderUpdate(OrderUpdate update);
     }
 }

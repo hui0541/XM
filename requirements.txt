@@ -1,5 +1,4 @@
+psutil
 pandas
 redis
 clickhouse-connect
-PyYAML
-streamlit

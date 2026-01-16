@@ -1,108 +1,66 @@
-package com.trading.execution;
-
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
-import java.util.logging.Logger;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 订单状态机 (Order State Machine)
- * 管理订单生命周期，处理从 NEW 到 FILLED/CANCELLED 的状态流转。
+ * 对应文件：订单撮合与回报.java
+ * 职责：订单状态机管理 (OMS - Order Management System)
  */
-public class OrderStateMachine {
-    private static final Logger logger = Logger.getLogger(OrderStateMachine.class.getName());
+public class 订单撮合与回报 implements 券商交易接口.TradeCallback {
 
-    // 订单状态枚举
-    public enum OrderStatus {
-        UNKNOWN,
-        NEW, // 已创建
-        SUBMITTED, // 已提交给券商
-        PARTIAL_FILLED, // 部分成交
-        FILLED, // 全部成交
-        CANCELLING, // 正在撤单
-        CANCELLED, // 已撤单
-        REJECTED // 被拒绝
-    }
-
-    // 存储所有订单的当前状态，Key 为 OrderID
-    // 使用 ConcurrentHashMap 支持高并发访问
-    private final Map<String, OrderStatus> orderStateMap = new ConcurrentHashMap<>();
-
-    /**
-     * 初始化订单状态
-     */
-    public void registerOrder(String orderId) {
-        orderStateMap.putIfAbsent(orderId, OrderStatus.NEW);
-        logger.info("Registered new order: " + orderId);
+    // 内存订单库: <OrderID, OrderInfo>
+    private final Map<String, OrderInfo> orderBook = new ConcurrentHashMap<>();
+    
+    @lombok.Data
+    public static class OrderInfo {
+        String internalId; // 内部ID
+        String brokerId;   // 券商返回ID
+        String symbol;
+        String status;
+        long createTime;
+        long updateTime;
     }
 
     /**
-     * 处理券商回报，更新状态
-     * 
-     * @param orderId      订单ID
-     * @param reportStatus 券商返回的原始状态字符串
+     * 处理来自券商的回报推送
      */
-    public synchronized void handleReport(String orderId, String reportStatus) {
-        OrderStatus currentStatus = orderStateMap.get(orderId);
-        if (currentStatus == null) {
-            logger.warning("Received report for unknown order: " + orderId);
-            return;
+    @Override
+    public void onOrderUpdate(券商交易接口.OrderUpdate update) {
+        String orderId = update.getOrderId();
+        
+        OrderInfo order = orderBook.get(orderId);
+        if (order == null) {
+            // 可能是系统重启前下的单，或者是新单
+            order = new OrderInfo();
+            order.setBrokerId(orderId);
+            order.setCreateTime(System.currentTimeMillis());
+            orderBook.put(orderId, order);
         }
-
-        OrderStatus newStatus = mapBrokerStatusToEnum(reportStatus);
-
-        if (isValidTransition(currentStatus, newStatus)) {
-            orderStateMap.put(orderId, newStatus);
-            logger.info(String.format("Order %s transitioned from %s to %s", orderId, currentStatus, newStatus));
-
-            // TODO: 这里可以触发下游事件，例如更新持仓数据库
-            if (newStatus == OrderStatus.FILLED) {
-                onOrderFilled(orderId);
-            }
-        } else {
-            logger.warning(String.format("Invalid state transition for order %s: %s -> %s", orderId, currentStatus,
-                    newStatus));
-        }
+        
+        order.setStatus(update.getStatus());
+        order.setUpdateTime(System.currentTimeMillis());
+        
+        // 打印关键日志
+        printLog(order, update);
+        
+        // TODO: 这里可以将回报通过 UDP/Redis 推送回 Python 策略端
+    }
+    
+    public void registerOrder(String brokerOrderId, String symbol) {
+        OrderInfo info = new OrderInfo();
+        info.setBrokerId(brokerOrderId);
+        info.setSymbol(symbol);
+        info.setStatus("SENDING");
+        info.setCreateTime(System.currentTimeMillis());
+        orderBook.put(brokerOrderId, info);
     }
 
-    /**
-     * 验证状态流转是否合法
-     * 防止如 "已成交" -> "新订单" 这种逻辑错误
-     */
-    private boolean isValidTransition(OrderStatus current, OrderStatus next) {
-        if (current == next)
-            return true; // 状态未变，视为合法（幂等）
-        if (current == OrderStatus.FILLED || current == OrderStatus.CANCELLED || current == OrderStatus.REJECTED) {
-            return false; // 终态不可变
-        }
-        return true;
-    }
-
-    /**
-     * 将券商的字符串状态映射为内部枚举
-     */
-    private OrderStatus mapBrokerStatusToEnum(String status) {
-        if (status == null)
-            return OrderStatus.UNKNOWN;
-        switch (status.toUpperCase()) {
-            case "SUBMITTED":
-                return OrderStatus.SUBMITTED;
-            case "PARTIALLY_FILLED":
-                return OrderStatus.PARTIAL_FILLED;
-            case "FILLED":
-                return OrderStatus.FILLED;
-            case "CANCELED":
-            case "CANCELLED":
-                return OrderStatus.CANCELLED;
-            case "REJECTED":
-                return OrderStatus.REJECTED;
-            default:
-                return OrderStatus.UNKNOWN;
-        }
-    }
-
-    private void onOrderFilled(String orderId) {
-        // 实现成交后的后续逻辑，如更新 Redis 缓存中的资金和持仓
-        // RedisRealTimeCache.updatePosition(...)
-        logger.info("Processing fill logic for order: " + orderId);
+    private void printLog(OrderInfo order, 券商交易接口.OrderUpdate update) {
+        String colorCode = "\u001B[33m"; // 黄色
+        if ("FILLED".equals(update.getStatus())) colorCode = "\u001B[32m"; // 绿色
+        if ("REJECTED".equals(update.getStatus())) colorCode = "\u001B[31m"; // 红色
+        
+        System.out.printf("%s[OMS] 订单更新: ID=%s 状态=%s 价格=%.2f 量=%d Msg=%s\u001B[0m%n",
+                colorCode, update.getOrderId(), update.getStatus(), 
+                update.getTradedPrice(), update.getTradedVolume(), update.getMessage());
     }
 }
