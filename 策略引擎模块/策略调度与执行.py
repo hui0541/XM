@@ -1,57 +1,90 @@
+# -*- coding: utf-8 -*-
 import redis
 import msgpack
 import time
+import logging
+import json
+from threading import Thread
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class HighSpeedEngine:
-    def __init__(self):
-        self.r = redis.StrictRedis(host='localhost', port=6379, db=0)
-        self.market_safe = True  # 环境安全开关
-        self.market_vibe = 1.0   # 环境加权系数
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0):
+        # 使用连接池管理 Redis 连接，提升多线程下的性能
+        self.pool = redis.ConnectionPool(host=redis_host, port=redis_port, db=redis_db, decode_responses=False)
+        self.r = redis.StrictRedis(connection_pool=self.pool)
+        self.running = False
+        self.strategy_channel = "market_tick_channel" # 订阅行情的频道
+        self.order_queue = "order_submission_queue"   # 发送订单的队列
 
-    def update_market_environment(self):
+    def process_market_tick(self, message):
         """
-        从 Redis 读取全局环境因子 (由行情适配层或中台计算)
-        核心指标：
-        1. sentiment_score: 0-100 (基于全市场涨跌家数比)
-        2. index_slope: 指数5分钟斜率 (是否处于极速跳水期)
+        处理单条行情数据，这是策略逻辑的核心入口
         """
-        raw = self.r.get("global_market_env")
-        if not raw:
-            return
+        try:
+            # 假设 C++ 写入的是 msgpack 二进制流，解包速度快
+            tick_data = msgpack.unpackb(message['data'], raw=False)
             
-        env = msgpack.unpackb(raw, raw=False)
-        
-        # 因子 1: 市场赚钱效应。如果得分 < 30 (冰点)，停止开新仓
-        sentiment_score = env.get('sentiment', 50)
-        
-        # 因子 2: 指数跳水保护。如果短时间内跌幅超过阈值，强制安全
-        index_drop = env.get('index_drop', 0) 
-        
-        # 综合判定
-        if sentiment_score < 30 or index_drop > 0.01:
-            self.market_safe = False
-        else:
-            self.market_safe = True
+            # --- 策略逻辑区域 ---
+            # 示例：简单的双均线或突破策略
+            symbol = tick_data.get('symbol')
+            price = tick_data.get('last_price')
             
-        # 环境加权：环境好时加大仓位 (1.2)，环境一般时缩小仓位 (0.8)
-        self.market_vibe = 1.2 if sentiment_score > 70 else 0.8
+            if price and price > 100000: # 示例触发条件
+                self.send_order(symbol, 'BUY', price, 1.0)
+            # ---------------------
 
-    def on_tick(self, packed_data):
-        tick = msgpack.unpackb(packed_data, raw=False)
+        except Exception as e:
+            logger.error(f"Error processing tick: {e}")
+
+    def send_order(self, symbol, direction, price, volume):
+        """
+        发送订单到执行模块 (Java)
+        """
+        order_packet = {
+            'id': str(time.time()), # 简易ID，生产环境需用 UUID 或雪花算法
+            'symbol': symbol,
+            'direction': direction,
+            'price': price,
+            'volume': volume,
+            'timestamp': time.time()
+        }
         
-        # 每隔 1 秒更新一次环境因子，避免高频 tick 期间重复计算
-        if int(time.time()) % 1 == 0:
-            self.update_market_environment()
+        try:
+            # 使用 msgpack 序列化订单，比 JSON 更小更快
+            packed_order = msgpack.packb(order_packet)
+            # 推送到 Redis 队列，Java 端通过 BLPOP 消费
+            self.r.lpush(self.order_queue, packed_order)
+            logger.info(f"Order sent: {symbol} {direction} @ {price}")
+        except redis.RedisError as e:
+            logger.critical(f"Redis error sending order: {e}")
 
-        # 环境因子过滤：如果大盘处于极端空头环境，即使个股信号出现也不下单
-        if not self.market_safe:
-            return 
+    def start(self):
+        """
+        启动引擎，使用 Pub/Sub 模式监听行情
+        """
+        self.running = True
+        logger.info("Strategy Engine Started. Waiting for data...")
+        
+        pubsub = self.r.pubsub()
+        pubsub.subscribe(**{self.strategy_channel: self.process_market_tick})
 
-        # 具体的个股策略逻辑
-        if self.check_stock_alpha(tick):
-            adjusted_qty = int(tick['base_qty'] * self.market_vibe)
-            self.send_order(tick['code'], 'BUY', adjusted_qty)
+        # 主循环
+        try:
+            thread = pubsub.run_in_thread(sleep_time=0.001)
+            # 保持主线程活跃
+            while self.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.stop()
+            thread.stop()
 
-    def check_stock_alpha(self, tick):
-        # 你的个股因子逻辑（如 KDJ、均线等）
-        return tick['price'] > tick['ma20']
+    def stop(self):
+        self.running = False
+        logger.info("Strategy Engine Stopped.")
+
+if __name__ == "__main__":
+    engine = HighSpeedEngine()
+    engine.start()
