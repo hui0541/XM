@@ -56,6 +56,8 @@ class StrategyLogger:
             except:
                 if buffer:
                     self._flush(buffer)
+        if buffer:
+            self._flush(buffer)
     
     def _flush(self, buffer):
         with open(self.log_file, "a", encoding="utf-8") as f:

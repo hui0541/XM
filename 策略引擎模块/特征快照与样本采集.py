@@ -28,7 +28,7 @@ class FeatureCollector:
         }
         self.buffer.append(record)
         
-        # 内存中积攒一定数量后落盘 (Parquet格式效率最高)
+        # 内存中积攒一定数量后落盘 (当前以 CSV 格式输出)
         if len(self.buffer) >= 1000:
             self.flush()
 
@@ -47,4 +47,4 @@ class FeatureCollector:
         
         df.to_csv(unique_path, index=False)
         self.buffer.clear()
-        print(f"[SampleCollector] 样本已落盘: {unique_path}")
+        print(f"[FeatureCollector] 样本已落盘: {unique_path}")
