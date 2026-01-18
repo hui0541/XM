@@ -17,7 +17,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QAction
 # 引入子模块
 from utils import SystemUtils
 from 进程管理器 import ProcessManager
-from 配置编辑器 import ConfigEditor
+from 配置编译器 import ConfigEditor
 from 环境自检 import EnvCheckWorker, EnvChecker
 from 健康检查 import HealthMonitor
 from 日志聚合器 import LogAggregator
